@@ -77,10 +77,10 @@ def get_sandbox_params() -> dict:
              'steps' (int), 'val_fraction' (float).
     """
     params = {
-        "student_id":    "",      # ← your NetID, e.g. "jdoe"
-        "learning_rate": 0.0,     # ← replace with value from ui exploration
-        "steps":         0,       # ← replace with value from ui exploration
-        "val_fraction":  0.20,    # ← keep at 0.20
+            "student_id": "yanghanfei",
+            "learning_rate": 1.000,
+            "steps": 500,
+            "val_fraction": 0.20,
     }
 
     if params["val_fraction"] != 0.20:
@@ -108,29 +108,11 @@ PAIN_KEYWORDS = [
 
 
 def flag_keyword_match(descriptions: List[str], keywords: List[str]) -> np.ndarray:
-    """Flags which condition descriptions mention at least one keyword.
 
-    A patient is flagged (True) if their condition text contains ANY of the
-    given keywords as a whole word or phrase, case-insensitively.
+    pattern = r"\b(?:" + "|".join(re.escape(kw) for kw in keywords) + r")\b"
+    matches = [bool(re.search(pattern, desc.lower())) for desc in descriptions] 
+    return np.array(matches, dtype=bool)
 
-    "Whole word or phrase" matters: the keyword "pain" should match
-    "lower back pain" but NOT "painless skin tag removal" (the substring
-    "pain" appears in "painless", but not as a standalone word). Likewise
-    the keyword "back pain" should only match when that exact two-word
-    phrase appears — "back to back appointments" should NOT match.
-
-    Hint: build a single regular expression of the form
-    r"\\b(?:keyword1|keyword2|...)\\b" (escape each keyword with
-    re.escape so punctuation in a keyword can't break the pattern), then
-    use re.search against each lower-cased description. This should take
-    about 4-6 lines.
-
-    :param descriptions: A list of N condition-text strings (one per
-    patient), e.g. "chronic kidney disease; type 2 diabetes".
-    :param keywords: The list of keywords/phrases to search for.
-    :return: A length-N boolean NumPy array; True where a keyword matched.
-    """
-    raise NotImplementedError("TODO: implement flag_keyword_match")
 
 
 def standardize_features(
@@ -154,48 +136,24 @@ def standardize_features(
 
 
 def stratified_split(labels: np.ndarray, val_fraction: float, seed: int) -> np.ndarray:
-    """Creates a stratified train/validation split, by hand (no sklearn).
+    rng = np.random.default_rng(seed)
+    val_mask = np.zeros(len(labels), dtype=bool)
+    unique_classes = np.unique(labels)
+    
+    for c in unique_classes:
 
-    A plain random split can accidentally put almost all of a rare class
-    into training and almost none into validation. A stratified split
-    avoids this by taking the same fraction of examples from each class,
-    so the class balance in train and validation both match the overall
-    class balance.
-
-    Follow these exact steps so your result is reproducible and matches
-    the autograder:
-      1. Create ``rng = np.random.default_rng(seed)``.
-      2. Process the sorted unique class labels in ascending order
-         (e.g. class 0 before class 1).
-      3. For each class, find the indices of `labels` belonging to that
-         class (in their original order), then shuffle just those indices
-         with ``rng.permutation(...)``.
-      4. The number of validation examples for that class is
-         ``round(val_fraction * number_of_examples_in_that_class)``.
-      5. The first that-many shuffled indices for the class go to
-         validation; mark them True in the result. Everything else is
-         False (i.e., train).
-
-    About 6-10 lines.
-
-    :param labels: A length-N array of 0/1 class labels.
-    :param val_fraction: Fraction of each class to reserve for validation,
-    e.g. 0.2 for 20%.
-    :param seed: Random seed, for reproducibility.
-    :return: A length-N boolean array; True marks a validation example.
-    """
-    raise NotImplementedError("TODO: implement stratified_split")
+        class_indices = np.where(labels == c)[0]
+        shuffled_indices = rng.permutation(class_indices)
+        
+        n_val = round(val_fraction * len(class_indices))
+        val_mask[shuffled_indices[:n_val]] = True
+        
+    return val_mask
 
 
 def sigmoid(z: np.ndarray) -> np.ndarray:
-    """Computes the logistic sigmoid, element-wise: 1 / (1 + e^-z).
 
-    1 line.
-
-    :param z: An array of any shape.
-    :return: An array of the same shape, with every value in (0, 1).
-    """
-    raise NotImplementedError("TODO: implement sigmoid")
+    return np.where(z >= 0, 1 / (1 + np.exp(-z)), np.exp(z) / (1 + np.exp(z)))
 
 
 def predict_proba(
@@ -217,32 +175,14 @@ def predict_proba(
 def logistic_regression_gradients(
     feature_matrix: np.ndarray, y: np.ndarray, weights: np.ndarray, bias: float
 ) -> Tuple[np.ndarray, float]:
-    """Computes the gradient of the log-loss with respect to the weights
-    and bias of a logistic regression model.
+    n_samples = feature_matrix.shape[0]
 
-    First compute the model's current predictions using predict_proba function,
-    then the error between predictions and the true labels y:
-
-        error = predictions - y
-
-    The gradient of the weights is the (feature-weighted) average error
-    over all N examples:
-
-        grad_weights = (feature_matrix^T . error) / N
-
-    The gradient of the bias is just the average error:
-
-        grad_bias = mean(error)
-
-    About 3-4 lines.
-
-    :param feature_matrix: A 2-D array of shape (N, D) of input features.
-    :param y: A length-N array of 0/1 true labels.
-    :param weights: The model's current length-D weight vector.
-    :param bias: The model's current bias term (a scalar).
-    :return: A tuple (grad_weights, grad_bias).
-    """
-    raise NotImplementedError("TODO: implement logistic_regression_gradients")
+    predictions = predict_proba(feature_matrix, weights, bias)
+    error = predictions - y
+    grad_weights = (feature_matrix.T.dot(error)) / n_samples
+    grad_bias = np.mean(error)
+    
+    return grad_weights, grad_bias
 
 
 def train_logistic_regression(
@@ -251,83 +191,50 @@ def train_logistic_regression(
     iterations: int,
     learning_rate: float,
 ) -> Tuple[np.ndarray, float]:
-    """Trains a logistic regression model with gradient descent.
-
-    Start with weights of all zeros (length D) and bias 0.0. Then,
-    `iterations` times: compute the gradients with
-    logistic_regression_gradients, and update both weights and bias by
-    subtracting the learning rate times their respective gradients.
-
-    About 5-7 lines.
-
-    :param feature_matrix: A 2-D array of shape (N, D) of (already
-    standardized) input features.
-    :param y: A length-N array of 0/1 true labels.
-    :param iterations: Number of gradient descent steps to take.
-    :param learning_rate: Step size for each gradient descent update.
-    :return: A tuple (weights, bias) — the trained parameters.
-    """
-    raise NotImplementedError("TODO: implement train_logistic_regression")
+    n_features = feature_matrix.shape[1]
+    weights = np.zeros(n_features)
+    bias = 0.0
+    
+    for _ in range(iterations):
+        grad_w, grad_b = logistic_regression_gradients(feature_matrix, y, weights, bias)
+        weights -= learning_rate * grad_w
+        bias -= learning_rate * grad_b
+        
+    return weights, bias
 
 
 def confusion_counts(y_true: np.ndarray, y_pred: np.ndarray) -> Tuple[int, int, int, int]:
-    """Counts true positives, false positives, true negatives, and false
-    negatives between predicted and true binary labels.
-
-    About 4 lines.
-
-    :param y_true: A length-N array of 0/1 true labels.
-    :param y_pred: A length-N array of 0/1 predicted labels.
-    :return: A tuple of plain Python ints (tp, fp, tn, fn).
-    """
-    raise NotImplementedError("TODO: implement confusion_counts")
+    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+    tn = int(np.sum((y_true == 0) & (y_pred == 0)))
+    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+    return tp, fp, tn, fn
 
 
 def precision_recall_f1(tp: int, fp: int, fn: int) -> Tuple[float, float, float]:
-    """Computes precision, recall, and F1-score from confusion counts.
-
-        precision = tp / (tp + fp)
-        recall    = tp / (tp + fn)
-        f1        = 2 * precision * recall / (precision + recall)
-
-    If a denominator would be zero, return 0.0 for that quantity instead
-    of dividing by zero.
-
-    About 5-8 lines.
-
-    :param tp: Number of true positives.
-    :param fp: Number of false positives.
-    :param fn: Number of false negatives.
-    :return: A tuple (precision, recall, f1).
-    """
-    raise NotImplementedError("TODO: implement precision_recall_f1")
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    return precision, recall, f1
 
 
 def roc_auc(y_true: np.ndarray, scores: np.ndarray) -> float:
-    """Computes the area under the ROC curve (AUC), from scratch.
-
-    Use the pairwise-comparison definition of AUC (equivalent to the
-    Mann-Whitney U statistic): consider every possible (positive example,
-    negative example) pair. AUC is the fraction of those pairs where the
-    positive example's score is higher than the negative example's score
-    (count a tie as half a point):
-
-        AUC = (sum over all pos/neg pairs of:
-                  1   if score_pos >  score_neg
-                  0.5 if score_pos == score_neg
-                  0   if score_pos <  score_neg)
-              / (number_of_positive_examples * number_of_negative_examples)
-
-    You may assume y_true contains at least one 0 and at least one 1.
-    A double loop over positives and negatives is fine at this dataset
-    size — clarity matters more than speed here. About 6-10 lines.
-
-    :param y_true: A length-N array of 0/1 true labels.
-    :param scores: A length-N array of predicted scores/probabilities
-    (higher means more likely positive).
-    :return: The AUC, a float between 0 and 1.
-    """
-    raise NotImplementedError("TODO: implement roc_auc")
+    pos_scores = scores[y_true == 1]
+    neg_scores = scores[y_true == 0]
+    
+    correct_pairs = 0.0
+    total_pairs = len(pos_scores) * len(neg_scores)
+    
+    if total_pairs == 0:
+        return 0.0
+    for p_score in pos_scores:
+        for n_score in neg_scores:
+            if p_score > n_score:
+                correct_pairs += 1.0
+            elif p_score == n_score:
+                correct_pairs += 0.5 
+                
+    return correct_pairs / total_pairs
 
 
 # =============================================================================
